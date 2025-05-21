@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package scheduler;
+
+option go_package = "github.com/training-scheduler/proto";
+
+// Service definition for the training scheduler
+service TrainingScheduler {
+  // Register a worker with the scheduler
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  
+  // Request a task to be assigned to a worker
+  rpc RequestTask(TaskRequest) returns (Task);
+  
+  // Report task status back to the scheduler
+  rpc ReportTaskStatus(TaskStatusUpdate) returns (TaskStatusResponse);
+  
+  // Stream for real-time monitoring of worker status
+  rpc MonitorWorker(WorkerStatusRequest) returns (stream WorkerStatusResponse);
+}
+
+// Worker information
+message Worker {
+  string id = 1;
+  repeated GPU gpus = 2;
+  string address = 3;
+  WorkerStatus status = 4;
+}
+
+// GPU resource information
+message GPU {
+  string id = 1;
+  string model = 2;
+  uint64 memory_mb = 3;
+  bool available = 4;
+}
+
+// Worker status enum
+enum WorkerStatus {
+  IDLE = 0;
+  BUSY = 1;
+  OFFLINE = 2;
+  ERROR = 3;
+}
+
+// Task definition
+message Task {
+  string id = 1;
+  string name = 2;
+  uint32 required_gpus = 3;
+  uint64 min_gpu_memory = 4;
+  bytes configuration = 5;
+  TaskStatus status = 6;
+}
+
+// Task status enum
+enum TaskStatus {
+  PENDING = 0;
+  RUNNING = 1;
+  COMPLETED = 2;
+  FAILED = 3;
+  CANCELED = 4;
+}
+
+// Request to register a worker
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  repeated GPU gpus = 2;
+  string address = 3;
+}
+
+// Response to worker registration
+message RegisterWorkerResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_id = 3;
+}
+
+// Request for a task
+message TaskRequest {
+  string worker_id = 1;
+  repeated string available_gpu_ids = 2;
+  Task task = 3;
+}
+
+// Task status update
+message TaskStatusUpdate {
+  string task_id = 1;
+  string worker_id = 2;
+  TaskStatus status = 3;
+  float progress = 4;
+  string message = 5;
+  repeated Metric metrics = 6;
+}
+
+// Training metrics
+message Metric {
+  string name = 1;
+  float value = 2;
+  uint64 timestamp = 3;
+}
+
+// Response to task status update
+message TaskStatusResponse {
+  bool acknowledged = 1;
+  string message = 2;
+}
+
+// Request for worker status monitoring
+message WorkerStatusRequest {
+  string worker_id = 1;
+}
+
+// Response for worker status monitoring
+message WorkerStatusResponse {
+  string worker_id = 1;
+  WorkerStatus status = 2;
+  repeated GPU gpus = 3;
+  repeated TaskSummary active_tasks = 4;
+  uint64 timestamp = 5;
+}
+
+// Summary of a task
+message TaskSummary {
+  string id = 1;
+  string name = 2;
+  TaskStatus status = 3;
+  float progress = 4;
+}

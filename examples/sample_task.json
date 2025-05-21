@@ -1,0 +1,15 @@
+{
+  "name": "ResNet50 Training",
+  "required_gpus": 2,
+  "min_gpu_memory": 8192,
+  "params": {
+    "model": "resnet50",
+    "dataset": "imagenet",
+    "batch_size": "64",
+    "learning_rate": "0.001",
+    "epochs": "90",
+    "optimizer": "sgd",
+    "momentum": "0.9",
+    "weight_decay": "0.0001"
+  }
+}
