@@ -31,3 +31,21 @@ The system is designed with the following key components:
 ## Implementation
 
 The system is implemented in Go, leveraging its concurrency model and performance characteristics for efficient distributed computing.
+
+## Monitoring
+
+The project includes a monitoring stack based on Prometheus and Grafana to observe the system's performance and behavior. You can find more detailed information in the `monitoring/README.md` file.
+
+To start the monitoring stack:
+```bash
+make monitor-up
+```
+
+To stop the monitoring stack:
+```bash
+make monitor-down
+```
+
+Access the monitoring interfaces:
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (default credentials: admin/admin)

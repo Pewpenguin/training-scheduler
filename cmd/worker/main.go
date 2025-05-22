@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/training-scheduler/pkg/metrics"
 	"github.com/training-scheduler/pkg/worker"
 	pb "github.com/training-scheduler/proto"
 )
@@ -20,6 +22,7 @@ func main() {
 	gpuModels := flag.String("models", "", "Comma-separated list of GPU models")
 	gpuMemories := flag.String("memories", "", "Comma-separated list of GPU memory sizes in MB")
 	workerAddr := flag.String("addr", "localhost:0", "Address of this worker")
+	metricsPort := flag.Int("metrics-port", 9092, "The metrics server port")
 	flag.Parse()
 
 	ids := strings.Split(*gpuIDs, ",")
@@ -53,10 +56,22 @@ func main() {
 		})
 	}
 
+	metricsServer := metrics.NewMetricsServer(fmt.Sprintf(":%d", *metricsPort))
+
+	log.Printf("Starting metrics server on port %d", *metricsPort)
+	go func() {
+		if err := metricsServer.Start(); err != nil {
+			log.Printf("Failed to start metrics server: %v", err)
+		}
+	}()
+
 	worker, err := worker.NewWorker(*schedulerAddr, gpus)
 	if err != nil {
 		log.Fatalf("Failed to create worker: %v", err)
 	}
+
+	workerMetrics := metrics.NewWorkerMetrics(worker.ID)
+	worker.SetMetrics(workerMetrics)
 
 	worker.Address = *workerAddr
 

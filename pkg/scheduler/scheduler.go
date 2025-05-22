@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/training-scheduler/pkg/metrics"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +21,7 @@ type Scheduler struct {
 	tasks          map[string]*Task
 	pendingTasks   []*Task
 	workloadPolicy WorkloadPolicy
+	metrics        *metrics.SchedulerMetrics
 }
 
 type Worker struct {
@@ -46,6 +48,7 @@ type Task struct {
 	Status        pb.TaskStatus
 	WorkerID      string
 	AssignedGPUs  []string
+	StartTime     time.Time
 	Progress      float32
 	Metrics       []*pb.Metric
 }
@@ -102,6 +105,7 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 
 	log.Printf("Worker registered: %s with %d GPUs", workerID, len(gpus))
 
+	s.recordWorkerRegistration()
 	s.assignPendingTasks()
 
 	return &pb.RegisterWorkerResponse{
@@ -134,8 +138,10 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 		task.Status = pb.TaskStatus_RUNNING
 		task.WorkerID = workerID
 		task.AssignedGPUs = gpuIDs
+		task.StartTime = time.Now()
 
 		worker.Status = pb.WorkerStatus_BUSY
+		s.recordWorkerStatusChange()
 		worker.Tasks[task.ID] = task
 
 		for _, gpu := range worker.GPUs {
@@ -187,6 +193,7 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	task.Metrics = update.Metrics
 
 	if update.Status == pb.TaskStatus_COMPLETED || update.Status == pb.TaskStatus_FAILED {
+		s.recordTaskCompletion(task)
 		for _, gpu := range worker.GPUs {
 			for _, id := range task.AssignedGPUs {
 				if gpu.ID == id {
@@ -199,6 +206,7 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 
 		if len(worker.Tasks) == 0 {
 			worker.Status = pb.WorkerStatus_IDLE
+			s.recordWorkerStatusChange()
 		}
 
 		s.assignPendingTasks()
@@ -276,6 +284,7 @@ func (s *Scheduler) AddTask(task *Task) {
 	s.pendingTasks = append(s.pendingTasks, task)
 
 	log.Printf("New task added: %s, required GPUs: %d", task.ID, task.RequiredGPUs)
+	s.recordTaskSubmission()
 
 	s.assignPendingTasks()
 }
@@ -291,6 +300,7 @@ func (s *Scheduler) assignPendingTasks() {
 		task.Status = pb.TaskStatus_RUNNING
 		task.WorkerID = workerID
 		task.AssignedGPUs = gpuIDs
+		task.StartTime = time.Now()
 
 		worker := s.workers[workerID]
 		worker.Status = pb.WorkerStatus_BUSY

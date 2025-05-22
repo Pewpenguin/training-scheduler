@@ -33,6 +33,13 @@ submit:
 monitor:
 	go run cmd/monitor/main.go --worker=worker-1
 
+# Monitor stack
+monitor-up:
+	docker-compose -f monitoring/docker-compose.monitoring.yml up -d
+
+monitor-down:
+	docker-compose -f monitoring/docker-compose.monitoring.yml down
+
 # Clean build artifacts
 clean:
 	rm -rf bin/

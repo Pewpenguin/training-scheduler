@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/training-scheduler/pkg/metrics"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -29,6 +30,7 @@ type Worker struct {
 	MetricFrequency time.Duration
 	TaskPriority    map[string]int
 	GPUAllocation   string
+	metrics         *metrics.WorkerMetrics
 }
 
 type Task struct {
@@ -175,6 +177,7 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 	w.ActiveTasks[task.ID] = task
 	w.mu.Unlock()
 
+	w.recordTaskStart(task)
 	w.reportTaskStatus(ctx, task)
 
 	go func() {
@@ -209,6 +212,7 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 				})
 				w.mu.Unlock()
 
+				w.recordTaskProgress(task)
 				w.reportTaskStatus(ctx, task)
 
 				w.mu.RLock()
@@ -223,6 +227,7 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 		task.Progress = 1.0
 		w.mu.Unlock()
 
+		w.recordTaskCompletion(task)
 		w.reportTaskStatus(ctx, task)
 
 		w.mu.Lock()
@@ -374,12 +379,14 @@ func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
 		w.Paused = true
 		log.Printf("Worker paused: %s", w.ID)
 		w.mu.Unlock()
+		w.recordStatusChange()
 
 	case "RESUME":
 		w.mu.Lock()
 		w.Paused = false
 		log.Printf("Worker resumed: %s", w.ID)
 		w.mu.Unlock()
+		w.recordStatusChange()
 
 	case "STOP_TASK":
 		taskID := command.Params["task_id"]
@@ -458,6 +465,7 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 	if resp.Status != w.Status {
 		log.Printf("Worker status updated: %v -> %v", w.Status, resp.Status)
 		w.Status = resp.Status
+		w.recordStatusChange()
 	}
 
 	if len(resp.ActiveTasks) > 0 {
