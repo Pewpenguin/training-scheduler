@@ -43,10 +43,7 @@ func main() {
 	if *workerID != "" {
 		monitorWorker(ctx, client, *workerID, *refreshRate)
 	} else {
-		// In a real implementation, we would have an API to list all workers
-		// For now, just display a message
-		fmt.Println("Worker ID must be specified for monitoring")
-		fmt.Println("Usage: monitor --worker=<worker_id>")
+		monitorAllWorkers(ctx, client, *refreshRate)
 	}
 }
 
@@ -135,5 +132,39 @@ func getTaskStatusString(status pb.TaskStatus) string {
 		return "CANCELED"
 	default:
 		return "UNKNOWN"
+	}
+}
+
+func monitorAllWorkers(ctx context.Context, client pb.TrainingSchedulerClient, refreshRate int) {
+	fmt.Println("Monitoring all workers...")
+
+	for {
+		resp, err := client.ListWorkers(ctx, &pb.ListWorkersRequest{})
+		if err != nil {
+			log.Fatalf("Failed to list workers: %v", err)
+		}
+
+		fmt.Print("\033[H\033[2J")
+		fmt.Println("All Workers Status:")
+		fmt.Println("------------------")
+		fmt.Printf("Total Workers: %d\n\n", len(resp.Workers))
+
+		fmt.Printf("%-20s %-10s %-20s %-10s\n", "WORKER ID", "STATUS", "ADDRESS", "GPU COUNT")
+		fmt.Println("--------------------------------------------------------------------")
+
+		if len(resp.Workers) == 0 {
+			fmt.Println("No workers registered")
+		} else {
+			for _, worker := range resp.Workers {
+				fmt.Printf("%-20s %-10s %-20s %-10d\n",
+					worker.WorkerId,
+					getWorkerStatusString(worker.Status),
+					worker.Address,
+					worker.GpuCount)
+			}
+		}
+
+		fmt.Println("\nPress Ctrl+C to exit")
+		time.Sleep(time.Duration(refreshRate) * time.Second)
 	}
 }

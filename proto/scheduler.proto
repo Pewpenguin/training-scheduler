@@ -17,6 +17,9 @@ service TrainingScheduler {
   
   // Stream for real-time monitoring of worker status
   rpc MonitorWorker(WorkerStatusRequest) returns (stream WorkerStatusResponse);
+  
+  // List all registered workers
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
 }
 
 // Worker information
@@ -118,6 +121,24 @@ message WorkerStatusResponse {
   repeated GPU gpus = 3;
   repeated TaskSummary active_tasks = 4;
   uint64 timestamp = 5;
+}
+
+// Request for listing all workers
+message ListWorkersRequest {
+  // Empty request
+}
+
+// Response for listing all workers
+message ListWorkersResponse {
+  repeated WorkerInfo workers = 1;
+}
+
+// Worker information for listing
+message WorkerInfo {
+  string worker_id = 1;
+  WorkerStatus status = 2;
+  string address = 3;
+  uint32 gpu_count = 4;
 }
 
 // Summary of a task

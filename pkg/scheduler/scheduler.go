@@ -310,3 +310,23 @@ func (s *Scheduler) assignPendingTasks() {
 		log.Printf("Task %s assigned to worker %s", task.ID, workerID)
 	}
 }
+
+func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest) (*pb.ListWorkersResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	response := &pb.ListWorkersResponse{
+		Workers: make([]*pb.WorkerInfo, 0, len(s.workers)),
+	}
+
+	for id, worker := range s.workers {
+		response.Workers = append(response.Workers, &pb.WorkerInfo{
+			WorkerId: id,
+			Status:   worker.Status,
+			Address:  worker.Address,
+			GpuCount: uint32(len(worker.GPUs)),
+		})
+	}
+
+	return response, nil
+}
