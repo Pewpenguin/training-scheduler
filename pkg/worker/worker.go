@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +25,10 @@ type Worker struct {
 	ActiveTasks map[string]*Task
 	mu          sync.RWMutex
 	Paused      bool
+
+	MetricFrequency time.Duration
+	TaskPriority    map[string]int
+	GPUAllocation   string
 }
 
 type Task struct {
@@ -44,12 +51,15 @@ func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
 	client := pb.NewTrainingSchedulerClient(conn)
 
 	return &Worker{
-		Address:     schedulerAddr,
-		GPUs:        gpus,
-		Status:      pb.WorkerStatus_IDLE,
-		Client:      client,
-		Conn:        conn,
-		ActiveTasks: make(map[string]*Task),
+		Address:         schedulerAddr,
+		GPUs:            gpus,
+		Status:          pb.WorkerStatus_IDLE,
+		Client:          client,
+		Conn:            conn,
+		ActiveTasks:     make(map[string]*Task),
+		MetricFrequency: 2 * time.Second,
+		TaskPriority:    make(map[string]int),
+		GPUAllocation:   "packed",
 	}, nil
 }
 
@@ -106,6 +116,8 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 					availableGPUIDs = append(availableGPUIDs, gpu.Id)
 				}
 			}
+
+			taskPriorities := w.TaskPriority
 			w.mu.RUnlock()
 
 			if len(availableGPUIDs) == 0 {
@@ -118,10 +130,23 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 				AvailableGpuIds: availableGPUIDs,
 			}
 
+			if len(taskPriorities) > 0 {
+				priorityInfo := make(map[string]string)
+				for taskType, priority := range taskPriorities {
+					priorityInfo[taskType] = fmt.Sprintf("%d", priority)
+				}
+
+				req.PriorityInfo = priorityInfo
+			}
+
 			task, err := w.Client.RequestTask(ctx, req)
 			if err != nil {
 				time.Sleep(5 * time.Second)
 				continue
+			}
+
+			if priority, exists := taskPriorities[task.Name]; exists {
+				log.Printf("Task %s has priority %d", task.Name, priority)
 			}
 
 			w.executeTask(ctx, task)
@@ -133,16 +158,7 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 	log.Printf("Executing task: %s", pbTask.Id)
 
 	w.mu.Lock()
-	assignedGPUIDs := make([]string, 0, pbTask.RequiredGpus)
-	assignedCount := uint32(0)
-
-	for _, gpu := range w.GPUs {
-		if gpu.Available && assignedCount < pbTask.RequiredGpus {
-			gpu.Available = false
-			assignedGPUIDs = append(assignedGPUIDs, gpu.Id)
-			assignedCount++
-		}
-	}
+	assignedGPUIDs := w.allocateGPUs(pbTask)
 
 	task := &Task{
 		ID:            pbTask.Id,
@@ -195,7 +211,10 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 
 				w.reportTaskStatus(ctx, task)
 
-				time.Sleep(2 * time.Second)
+				w.mu.RLock()
+				metricFreq := w.MetricFrequency
+				w.mu.RUnlock()
+				time.Sleep(metricFreq)
 			}
 		}
 
@@ -286,9 +305,13 @@ func (w *Worker) reportStatus(ctx context.Context) {
 
 				log.Printf("Received status update from scheduler for worker %s", resp.WorkerId)
 
+				w.processStatusUpdate(streamCtx, resp)
+
 				if resp.Command != nil {
 					w.handleCommand(streamCtx, resp.Command)
 				}
+
+				w.sendStatusUpdate()
 			}
 		}()
 	}
@@ -312,29 +335,33 @@ func (w *Worker) reportStatus(ctx context.Context) {
 			establishStream()
 
 		case <-ticker.C:
-			w.mu.RLock()
-
-			activeTasks := make([]string, 0, len(w.ActiveTasks))
-			for id, task := range w.ActiveTasks {
-				activeTasks = append(activeTasks, fmt.Sprintf("%s(%.1f%%)", id, task.Progress*100))
-			}
-
-			availableGPUs := 0
-			totalGPUs := len(w.GPUs)
-			for _, gpu := range w.GPUs {
-				if gpu.Available {
-					availableGPUs++
-				}
-			}
-
-			log.Printf("Worker status: ID=%s, Status=%v, GPUs=%d/%d available",
-				w.ID, w.Status, availableGPUs, totalGPUs)
-
-			if len(activeTasks) > 0 {
-				log.Printf("Worker %s active tasks: %v", w.ID, activeTasks)
-			}
-			w.mu.RUnlock()
+			w.sendStatusUpdate()
 		}
+	}
+}
+
+func (w *Worker) sendStatusUpdate() {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	activeTasks := make([]string, 0, len(w.ActiveTasks))
+	for id, task := range w.ActiveTasks {
+		activeTasks = append(activeTasks, fmt.Sprintf("%s(%.1f%%)", id, task.Progress*100))
+	}
+
+	availableGPUs := 0
+	totalGPUs := len(w.GPUs)
+	for _, gpu := range w.GPUs {
+		if gpu.Available {
+			availableGPUs++
+		}
+	}
+
+	log.Printf("Worker status: ID=%s, Status=%v, GPUs=%d/%d available",
+		w.ID, w.Status, availableGPUs, totalGPUs)
+
+	if len(activeTasks) > 0 {
+		log.Printf("Worker %s active tasks: %v", w.ID, activeTasks)
 	}
 }
 
@@ -364,12 +391,153 @@ func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
 		config := command.Params["config"]
 		if config != "" {
 			log.Printf("Updating worker configuration: %s", config)
-			// Apply configuration update logic here
+
+			if metricFreq, exists := command.Params["metric_frequency"]; exists {
+				log.Printf("Updating metric collection frequency: %s", metricFreq)
+				w.updateMetricFrequency(metricFreq)
+			}
+
+			if taskPriority, exists := command.Params["task_priority"]; exists {
+				log.Printf("Updating task priority settings: %s", taskPriority)
+				w.updateTaskPrioritySettings(taskPriority)
+			}
+
+			if gpuAllocation, exists := command.Params["gpu_allocation"]; exists {
+				log.Printf("Updating GPU allocation strategy: %s", gpuAllocation)
+				w.updateGPUAllocationStrategy(gpuAllocation)
+			}
 		}
+
+	case "SYNC_STATE":
+		log.Printf("Synchronizing worker state with scheduler")
+		go w.reportStatus(ctx)
 
 	default:
 		log.Printf("Unknown command type: %s", command.Type)
 	}
+}
+
+func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusResponse) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(resp.Gpus) > 0 {
+		log.Printf("Synchronizing GPU status with scheduler's view")
+		schedulerGPUs := make(map[string]*pb.GPU)
+		for _, gpu := range resp.Gpus {
+			schedulerGPUs[gpu.Id] = gpu
+		}
+
+		for i, gpu := range w.GPUs {
+			if schedulerGPU, exists := schedulerGPUs[gpu.Id]; exists {
+				gpuInUse := false
+				for _, task := range w.ActiveTasks {
+					for _, gpuID := range task.GPUIDs {
+						if gpuID == gpu.Id {
+							gpuInUse = true
+							break
+						}
+					}
+					if gpuInUse {
+						break
+					}
+				}
+
+				if !gpuInUse {
+					oldAvailable := w.GPUs[i].Available
+					w.GPUs[i].Available = schedulerGPU.Available
+					if oldAvailable != w.GPUs[i].Available {
+						log.Printf("GPU %s availability changed: %v -> %v",
+							gpu.Id, oldAvailable, w.GPUs[i].Available)
+					}
+				}
+			}
+		}
+	}
+
+	if resp.Status != w.Status {
+		log.Printf("Worker status updated: %v -> %v", w.Status, resp.Status)
+		w.Status = resp.Status
+	}
+
+	if len(resp.ActiveTasks) > 0 {
+		schedulerTasks := make(map[string]*pb.TaskSummary)
+		for _, task := range resp.ActiveTasks {
+			schedulerTasks[task.Id] = task
+		}
+
+		for taskID, taskSummary := range schedulerTasks {
+			if _, exists := w.ActiveTasks[taskID]; !exists {
+				log.Printf("Task %s exists in scheduler but not in worker, will request it", taskID)
+			} else {
+				w.updateTaskPriority(taskID, taskSummary)
+			}
+		}
+
+		for taskID, task := range w.ActiveTasks {
+			if _, exists := schedulerTasks[taskID]; !exists {
+				log.Printf("Task %s exists in worker but not in scheduler, marking as canceled", taskID)
+				task.Status = pb.TaskStatus_CANCELED
+				go func(taskID string, task *Task) {
+					w.mu.Lock()
+					delete(w.ActiveTasks, taskID)
+					for _, gpu := range w.GPUs {
+						for _, id := range task.GPUIDs {
+							if gpu.Id == id {
+								gpu.Available = true
+							}
+						}
+					}
+					w.mu.Unlock()
+					w.reportTaskStatus(ctx, task)
+				}(taskID, task)
+			}
+		}
+	}
+
+}
+
+func (w *Worker) updateTaskPriority(taskID string, schedulerTask *pb.TaskSummary) {
+	task, exists := w.ActiveTasks[taskID]
+	if !exists {
+		return
+	}
+
+	if task.Status != schedulerTask.Status {
+		log.Printf("Task %s status updated from scheduler: %v -> %v",
+			taskID, task.Status, schedulerTask.Status)
+		task.Status = schedulerTask.Status
+
+		if schedulerTask.Status == pb.TaskStatus_COMPLETED ||
+			schedulerTask.Status == pb.TaskStatus_FAILED ||
+			schedulerTask.Status == pb.TaskStatus_CANCELED {
+			go func(taskID string) {
+				w.mu.Lock()
+				delete(w.ActiveTasks, taskID)
+				for _, gpu := range w.GPUs {
+					for _, id := range task.GPUIDs {
+						if gpu.Id == id {
+							gpu.Available = true
+						}
+					}
+				}
+				w.mu.Unlock()
+			}(taskID)
+		}
+	}
+
+	if abs(float64(task.Progress-schedulerTask.Progress)) > 0.05 {
+		log.Printf("Task %s progress synced with scheduler: %.2f -> %.2f",
+			taskID, task.Progress, schedulerTask.Progress)
+		task.Progress = schedulerTask.Progress
+	}
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func (w *Worker) stopTask(ctx context.Context, taskID string) {
@@ -398,4 +566,144 @@ func (w *Worker) Stop() {
 	w.mu.RUnlock()
 
 	log.Println("Worker stopped")
+}
+
+func (w *Worker) updateMetricFrequency(freqStr string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	freq, err := time.ParseDuration(freqStr)
+	if err != nil {
+		log.Printf("Invalid metric frequency format: %v", err)
+		return
+	}
+
+	if freq < 100*time.Millisecond || freq > time.Minute {
+		log.Printf("Metric frequency out of range (100ms-1m): %s", freqStr)
+		return
+	}
+
+	log.Printf("Setting metric frequency to %v", freq)
+	w.MetricFrequency = freq
+
+	for _, task := range w.ActiveTasks {
+		log.Printf("Applied new metric frequency to task %s", task.ID)
+	}
+}
+
+func (w *Worker) updateTaskPrioritySettings(priorityStr string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	priorities := make(map[string]int)
+	for _, pair := range strings.Split(priorityStr, ",") {
+		parts := strings.Split(pair, "=")
+		if len(parts) != 2 {
+			continue
+		}
+
+		taskType := strings.TrimSpace(parts[0])
+		priority, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			log.Printf("Invalid priority value for %s: %v", taskType, err)
+			continue
+		}
+
+		priorities[taskType] = priority
+	}
+
+	if len(priorities) > 0 {
+		log.Printf("Setting task priorities: %v", priorities)
+		w.TaskPriority = priorities
+	}
+}
+
+func (w *Worker) updateGPUAllocationStrategy(strategy string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	validStrategies := map[string]bool{
+		"packed":      true,
+		"spread":      true,
+		"memory":      true,
+		"performance": true,
+	}
+
+	strategy = strings.ToLower(strings.TrimSpace(strategy))
+	if !validStrategies[strategy] {
+		log.Printf("Invalid GPU allocation strategy: %s", strategy)
+		return
+	}
+
+	log.Printf("Setting GPU allocation strategy to %s", strategy)
+	w.GPUAllocation = strategy
+}
+
+func (w *Worker) allocateGPUs(task *pb.Task) []string {
+	assignedGPUIDs := make([]string, 0, task.RequiredGpus)
+	availableGPUs := make([]*pb.GPU, 0)
+
+	for _, gpu := range w.GPUs {
+		if gpu.Available {
+			availableGPUs = append(availableGPUs, gpu)
+		}
+	}
+
+	if uint32(len(availableGPUs)) < task.RequiredGpus {
+		log.Printf("Not enough available GPUs for task %s", task.Id)
+		return assignedGPUIDs
+	}
+
+	switch w.GPUAllocation {
+	case "packed":
+		for i := 0; i < int(task.RequiredGpus) && i < len(availableGPUs); i++ {
+			availableGPUs[i].Available = false
+			assignedGPUIDs = append(assignedGPUIDs, availableGPUs[i].Id)
+		}
+
+	case "spread":
+		for i, gpu := range availableGPUs {
+			if i%2 == 0 && uint32(len(assignedGPUIDs)) < task.RequiredGpus {
+				gpu.Available = false
+				assignedGPUIDs = append(assignedGPUIDs, gpu.Id)
+			}
+		}
+
+		for i, gpu := range availableGPUs {
+			if i%2 == 1 && uint32(len(assignedGPUIDs)) < task.RequiredGpus {
+				gpu.Available = false
+				assignedGPUIDs = append(assignedGPUIDs, gpu.Id)
+			}
+		}
+
+	case "memory":
+		sort.Slice(availableGPUs, func(i, j int) bool {
+			return availableGPUs[i].MemoryMb > availableGPUs[j].MemoryMb
+		})
+		for i := 0; i < int(task.RequiredGpus) && i < len(availableGPUs); i++ {
+			availableGPUs[i].Available = false
+			assignedGPUIDs = append(assignedGPUIDs, availableGPUs[i].Id)
+		}
+
+	case "performance":
+		sort.Slice(availableGPUs, func(i, j int) bool {
+			if availableGPUs[i].CudaCores > 0 && availableGPUs[j].CudaCores > 0 {
+				return availableGPUs[i].CudaCores > availableGPUs[j].CudaCores
+			}
+			return availableGPUs[i].MemoryBandwidth > availableGPUs[j].MemoryBandwidth
+		})
+		for i := 0; i < int(task.RequiredGpus) && i < len(availableGPUs); i++ {
+			availableGPUs[i].Available = false
+			assignedGPUIDs = append(assignedGPUIDs, availableGPUs[i].Id)
+		}
+
+	default:
+		for i := 0; i < int(task.RequiredGpus) && i < len(availableGPUs); i++ {
+			availableGPUs[i].Available = false
+			assignedGPUIDs = append(assignedGPUIDs, availableGPUs[i].Id)
+		}
+	}
+
+	log.Printf("Allocated %d GPUs to task %s using '%s' strategy", len(assignedGPUIDs), task.Id, w.GPUAllocation)
+	return assignedGPUIDs
 }
