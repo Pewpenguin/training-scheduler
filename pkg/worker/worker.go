@@ -227,12 +227,91 @@ func (w *Worker) reportTaskStatus(ctx context.Context, task *Task) {
 }
 
 func (w *Worker) reportStatus(ctx context.Context) {
+	var streamCancel context.CancelFunc
+	var streamCtx context.Context
+	var streamMutex sync.Mutex
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	establishStream := func() {
+		streamMutex.Lock()
+		defer streamMutex.Unlock()
+
+		if streamCancel != nil {
+			streamCancel()
+		}
+
+		streamCtx, streamCancel = context.WithCancel(ctx)
+
+		req := &pb.WorkerStatusRequest{
+			WorkerId: w.ID,
+		}
+
+		stream, err := w.Client.MonitorWorker(streamCtx, req)
+		if err != nil {
+			log.Printf("Failed to establish worker status monitoring: %v", err)
+			return
+		}
+
+		log.Printf("Worker %s status monitoring established", w.ID)
+
+		go func() {
+			defer streamCancel()
+
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					log.Printf("Error receiving from status stream: %v", err)
+					return
+				}
+
+				log.Printf("Received status update from scheduler for worker %s", resp.WorkerId)
+			}
+		}()
+	}
+
+	establishStream()
+
+	reconnectTicker := time.NewTicker(2 * time.Minute)
+	defer reconnectTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
+			streamMutex.Lock()
+			if streamCancel != nil {
+				streamCancel()
+			}
+			streamMutex.Unlock()
 			return
-		default:
-			time.Sleep(10 * time.Second)
+
+		case <-reconnectTicker.C:
+			establishStream()
+
+		case <-ticker.C:
+			w.mu.RLock()
+
+			activeTasks := make([]string, 0, len(w.ActiveTasks))
+			for id, task := range w.ActiveTasks {
+				activeTasks = append(activeTasks, fmt.Sprintf("%s(%.1f%%)", id, task.Progress*100))
+			}
+
+			availableGPUs := 0
+			totalGPUs := len(w.GPUs)
+			for _, gpu := range w.GPUs {
+				if gpu.Available {
+					availableGPUs++
+				}
+			}
+
+			log.Printf("Worker status: ID=%s, Status=%v, GPUs=%d/%d available",
+				w.ID, w.Status, availableGPUs, totalGPUs)
+
+			if len(activeTasks) > 0 {
+				log.Printf("Worker %s active tasks: %v", w.ID, activeTasks)
+			}
+			w.mu.RUnlock()
 		}
 	}
 }
