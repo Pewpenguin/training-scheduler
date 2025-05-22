@@ -121,6 +121,12 @@ message WorkerStatusResponse {
   repeated GPU gpus = 3;
   repeated TaskSummary active_tasks = 4;
   uint64 timestamp = 5;
+  WorkerCommand command = 6;
+}
+
+message WorkerCommand {
+  string type = 1;
+  map<string, string> params = 2;
 }
 
 // Request for listing all workers

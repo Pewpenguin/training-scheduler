@@ -21,6 +21,7 @@ type Worker struct {
 	Conn        *grpc.ClientConn
 	ActiveTasks map[string]*Task
 	mu          sync.RWMutex
+	Paused      bool
 }
 
 type Task struct {
@@ -92,6 +93,13 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 			return
 		default:
 			w.mu.RLock()
+			if w.Paused {
+				w.mu.RUnlock()
+				log.Printf("Worker is paused, not requesting new tasks")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
 			availableGPUIDs := make([]string, 0)
 			for _, gpu := range w.GPUs {
 				if gpu.Available {
@@ -165,6 +173,16 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 				w.reportTaskStatus(ctx, task)
 				return
 			default:
+				w.mu.RLock()
+				paused := w.Paused
+				w.mu.RUnlock()
+
+				if paused {
+					log.Printf("Task %s paused at %.1f%%", task.ID, float32(progress)*100)
+					time.Sleep(5 * time.Second)
+					continue
+				}
+
 				w.mu.Lock()
 				task.Progress = float32(progress)
 
@@ -267,6 +285,10 @@ func (w *Worker) reportStatus(ctx context.Context) {
 				}
 
 				log.Printf("Received status update from scheduler for worker %s", resp.WorkerId)
+
+				if resp.Command != nil {
+					w.handleCommand(streamCtx, resp.Command)
+				}
 			}
 		}()
 	}
@@ -313,6 +335,54 @@ func (w *Worker) reportStatus(ctx context.Context) {
 			}
 			w.mu.RUnlock()
 		}
+	}
+}
+
+func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
+	log.Printf("Received command: %s", command.Type)
+
+	switch command.Type {
+	case "PAUSE":
+		w.mu.Lock()
+		w.Paused = true
+		log.Printf("Worker paused: %s", w.ID)
+		w.mu.Unlock()
+
+	case "RESUME":
+		w.mu.Lock()
+		w.Paused = false
+		log.Printf("Worker resumed: %s", w.ID)
+		w.mu.Unlock()
+
+	case "STOP_TASK":
+		taskID := command.Params["task_id"]
+		if taskID != "" {
+			w.stopTask(ctx, taskID)
+		}
+
+	case "UPDATE_CONFIG":
+		config := command.Params["config"]
+		if config != "" {
+			log.Printf("Updating worker configuration: %s", config)
+			// Apply configuration update logic here
+		}
+
+	default:
+		log.Printf("Unknown command type: %s", command.Type)
+	}
+}
+
+func (w *Worker) stopTask(ctx context.Context, taskID string) {
+	w.mu.Lock()
+	task, exists := w.ActiveTasks[taskID]
+	if exists {
+		task.Status = pb.TaskStatus_CANCELED
+		log.Printf("Task stopped: %s", taskID)
+	}
+	w.mu.Unlock()
+
+	if exists {
+		w.reportTaskStatus(ctx, task)
 	}
 }
 

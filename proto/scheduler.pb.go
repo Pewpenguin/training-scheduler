@@ -788,6 +788,7 @@ type WorkerStatusResponse struct {
 	Gpus          []*GPU                 `protobuf:"bytes,3,rep,name=gpus,proto3" json:"gpus,omitempty"`
 	ActiveTasks   []*TaskSummary         `protobuf:"bytes,4,rep,name=active_tasks,json=activeTasks,proto3" json:"active_tasks,omitempty"`
 	Timestamp     uint64                 `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Command       *WorkerCommand         `protobuf:"bytes,6,opt,name=command,proto3" json:"command,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -857,6 +858,65 @@ func (x *WorkerStatusResponse) GetTimestamp() uint64 {
 	return 0
 }
 
+func (x *WorkerStatusResponse) GetCommand() *WorkerCommand {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
+type WorkerCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	Params        map[string]string      `protobuf:"bytes,2,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerCommand) Reset() {
+	*x = WorkerCommand{}
+	mi := &file_proto_scheduler_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerCommand) ProtoMessage() {}
+
+func (x *WorkerCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scheduler_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerCommand.ProtoReflect.Descriptor instead.
+func (*WorkerCommand) Descriptor() ([]byte, []int) {
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *WorkerCommand) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *WorkerCommand) GetParams() map[string]string {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
 // Request for listing all workers
 type ListWorkersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -866,7 +926,7 @@ type ListWorkersRequest struct {
 
 func (x *ListWorkersRequest) Reset() {
 	*x = ListWorkersRequest{}
-	mi := &file_proto_scheduler_proto_msgTypes[11]
+	mi := &file_proto_scheduler_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +938,7 @@ func (x *ListWorkersRequest) String() string {
 func (*ListWorkersRequest) ProtoMessage() {}
 
 func (x *ListWorkersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scheduler_proto_msgTypes[11]
+	mi := &file_proto_scheduler_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +951,7 @@ func (x *ListWorkersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkersRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkersRequest) Descriptor() ([]byte, []int) {
-	return file_proto_scheduler_proto_rawDescGZIP(), []int{11}
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{12}
 }
 
 // Response for listing all workers
@@ -904,7 +964,7 @@ type ListWorkersResponse struct {
 
 func (x *ListWorkersResponse) Reset() {
 	*x = ListWorkersResponse{}
-	mi := &file_proto_scheduler_proto_msgTypes[12]
+	mi := &file_proto_scheduler_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +976,7 @@ func (x *ListWorkersResponse) String() string {
 func (*ListWorkersResponse) ProtoMessage() {}
 
 func (x *ListWorkersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scheduler_proto_msgTypes[12]
+	mi := &file_proto_scheduler_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,7 +989,7 @@ func (x *ListWorkersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkersResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkersResponse) Descriptor() ([]byte, []int) {
-	return file_proto_scheduler_proto_rawDescGZIP(), []int{12}
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListWorkersResponse) GetWorkers() []*WorkerInfo {
@@ -952,7 +1012,7 @@ type WorkerInfo struct {
 
 func (x *WorkerInfo) Reset() {
 	*x = WorkerInfo{}
-	mi := &file_proto_scheduler_proto_msgTypes[13]
+	mi := &file_proto_scheduler_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1024,7 @@ func (x *WorkerInfo) String() string {
 func (*WorkerInfo) ProtoMessage() {}
 
 func (x *WorkerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scheduler_proto_msgTypes[13]
+	mi := &file_proto_scheduler_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1037,7 @@ func (x *WorkerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerInfo.ProtoReflect.Descriptor instead.
 func (*WorkerInfo) Descriptor() ([]byte, []int) {
-	return file_proto_scheduler_proto_rawDescGZIP(), []int{13}
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *WorkerInfo) GetWorkerId() string {
@@ -1021,7 +1081,7 @@ type TaskSummary struct {
 
 func (x *TaskSummary) Reset() {
 	*x = TaskSummary{}
-	mi := &file_proto_scheduler_proto_msgTypes[14]
+	mi := &file_proto_scheduler_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1033,7 +1093,7 @@ func (x *TaskSummary) String() string {
 func (*TaskSummary) ProtoMessage() {}
 
 func (x *TaskSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_scheduler_proto_msgTypes[14]
+	mi := &file_proto_scheduler_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1046,7 +1106,7 @@ func (x *TaskSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSummary.ProtoReflect.Descriptor instead.
 func (*TaskSummary) Descriptor() ([]byte, []int) {
-	return file_proto_scheduler_proto_rawDescGZIP(), []int{14}
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TaskSummary) GetId() string {
@@ -1127,13 +1187,20 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\facknowledged\x18\x01 \x01(\bR\facknowledged\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"2\n" +
 	"\x13WorkerStatusRequest\x12\x1b\n" +
-	"\tworker_id\x18\x01 \x01(\tR\bworkerId\"\xe1\x01\n" +
+	"\tworker_id\x18\x01 \x01(\tR\bworkerId\"\x95\x02\n" +
 	"\x14WorkerStatusResponse\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12/\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x17.scheduler.WorkerStatusR\x06status\x12\"\n" +
 	"\x04gpus\x18\x03 \x03(\v2\x0e.scheduler.GPUR\x04gpus\x129\n" +
 	"\factive_tasks\x18\x04 \x03(\v2\x16.scheduler.TaskSummaryR\vactiveTasks\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\x04R\ttimestamp\"\x14\n" +
+	"\ttimestamp\x18\x05 \x01(\x04R\ttimestamp\x122\n" +
+	"\acommand\x18\x06 \x01(\v2\x18.scheduler.WorkerCommandR\acommand\"\x9c\x01\n" +
+	"\rWorkerCommand\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12<\n" +
+	"\x06params\x18\x02 \x03(\v2$.scheduler.WorkerCommand.ParamsEntryR\x06params\x1a9\n" +
+	"\vParamsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x14\n" +
 	"\x12ListWorkersRequest\"F\n" +
 	"\x13ListWorkersResponse\x12/\n" +
 	"\aworkers\x18\x01 \x03(\v2\x15.scheduler.WorkerInfoR\aworkers\"\x91\x01\n" +
@@ -1181,7 +1248,7 @@ func file_proto_scheduler_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_scheduler_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_scheduler_proto_goTypes = []any{
 	(WorkerStatus)(0),              // 0: scheduler.WorkerStatus
 	(TaskStatus)(0),                // 1: scheduler.TaskStatus
@@ -1196,10 +1263,12 @@ var file_proto_scheduler_proto_goTypes = []any{
 	(*TaskStatusResponse)(nil),     // 10: scheduler.TaskStatusResponse
 	(*WorkerStatusRequest)(nil),    // 11: scheduler.WorkerStatusRequest
 	(*WorkerStatusResponse)(nil),   // 12: scheduler.WorkerStatusResponse
-	(*ListWorkersRequest)(nil),     // 13: scheduler.ListWorkersRequest
-	(*ListWorkersResponse)(nil),    // 14: scheduler.ListWorkersResponse
-	(*WorkerInfo)(nil),             // 15: scheduler.WorkerInfo
-	(*TaskSummary)(nil),            // 16: scheduler.TaskSummary
+	(*WorkerCommand)(nil),          // 13: scheduler.WorkerCommand
+	(*ListWorkersRequest)(nil),     // 14: scheduler.ListWorkersRequest
+	(*ListWorkersResponse)(nil),    // 15: scheduler.ListWorkersResponse
+	(*WorkerInfo)(nil),             // 16: scheduler.WorkerInfo
+	(*TaskSummary)(nil),            // 17: scheduler.TaskSummary
+	nil,                            // 18: scheduler.WorkerCommand.ParamsEntry
 }
 var file_proto_scheduler_proto_depIdxs = []int32{
 	3,  // 0: scheduler.Worker.gpus:type_name -> scheduler.GPU
@@ -1211,25 +1280,27 @@ var file_proto_scheduler_proto_depIdxs = []int32{
 	9,  // 6: scheduler.TaskStatusUpdate.metrics:type_name -> scheduler.Metric
 	0,  // 7: scheduler.WorkerStatusResponse.status:type_name -> scheduler.WorkerStatus
 	3,  // 8: scheduler.WorkerStatusResponse.gpus:type_name -> scheduler.GPU
-	16, // 9: scheduler.WorkerStatusResponse.active_tasks:type_name -> scheduler.TaskSummary
-	15, // 10: scheduler.ListWorkersResponse.workers:type_name -> scheduler.WorkerInfo
-	0,  // 11: scheduler.WorkerInfo.status:type_name -> scheduler.WorkerStatus
-	1,  // 12: scheduler.TaskSummary.status:type_name -> scheduler.TaskStatus
-	5,  // 13: scheduler.TrainingScheduler.RegisterWorker:input_type -> scheduler.RegisterWorkerRequest
-	7,  // 14: scheduler.TrainingScheduler.RequestTask:input_type -> scheduler.TaskRequest
-	8,  // 15: scheduler.TrainingScheduler.ReportTaskStatus:input_type -> scheduler.TaskStatusUpdate
-	11, // 16: scheduler.TrainingScheduler.MonitorWorker:input_type -> scheduler.WorkerStatusRequest
-	13, // 17: scheduler.TrainingScheduler.ListWorkers:input_type -> scheduler.ListWorkersRequest
-	6,  // 18: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
-	4,  // 19: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
-	10, // 20: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
-	12, // 21: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
-	14, // 22: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
-	18, // [18:23] is the sub-list for method output_type
-	13, // [13:18] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	17, // 9: scheduler.WorkerStatusResponse.active_tasks:type_name -> scheduler.TaskSummary
+	13, // 10: scheduler.WorkerStatusResponse.command:type_name -> scheduler.WorkerCommand
+	18, // 11: scheduler.WorkerCommand.params:type_name -> scheduler.WorkerCommand.ParamsEntry
+	16, // 12: scheduler.ListWorkersResponse.workers:type_name -> scheduler.WorkerInfo
+	0,  // 13: scheduler.WorkerInfo.status:type_name -> scheduler.WorkerStatus
+	1,  // 14: scheduler.TaskSummary.status:type_name -> scheduler.TaskStatus
+	5,  // 15: scheduler.TrainingScheduler.RegisterWorker:input_type -> scheduler.RegisterWorkerRequest
+	7,  // 16: scheduler.TrainingScheduler.RequestTask:input_type -> scheduler.TaskRequest
+	8,  // 17: scheduler.TrainingScheduler.ReportTaskStatus:input_type -> scheduler.TaskStatusUpdate
+	11, // 18: scheduler.TrainingScheduler.MonitorWorker:input_type -> scheduler.WorkerStatusRequest
+	14, // 19: scheduler.TrainingScheduler.ListWorkers:input_type -> scheduler.ListWorkersRequest
+	6,  // 20: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
+	4,  // 21: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
+	10, // 22: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
+	12, // 23: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
+	15, // 24: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
+	20, // [20:25] is the sub-list for method output_type
+	15, // [15:20] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_proto_scheduler_proto_init() }
@@ -1243,7 +1314,7 @@ func file_proto_scheduler_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scheduler_proto_rawDesc), len(file_proto_scheduler_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
