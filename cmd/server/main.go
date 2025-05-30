@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
 	"github.com/training-scheduler/pkg/scheduler"
 	pb "github.com/training-scheduler/proto"
@@ -19,6 +20,8 @@ func main() {
 	port := flag.Int("port", 50051, "The server port")
 	metricsPort := flag.Int("metrics-port", 9091, "The metrics server port")
 	policyType := flag.String("policy", "balanced", "Workload distribution policy (simple or balanced)")
+	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logDir := flag.String("log-dir", "/var/log/scheduler", "Directory for log files")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
@@ -32,10 +35,8 @@ func main() {
 	switch *policyType {
 	case "simple":
 		policy = scheduler.NewSimpleWorkloadPolicy()
-		log.Println("Using simple workload distribution policy")
 	case "balanced":
 		policy = scheduler.NewBalancedWorkloadPolicy()
-		log.Println("Using balanced workload distribution policy")
 	default:
 		log.Fatalf("Unknown policy type: %s", *policyType)
 	}
@@ -43,22 +44,40 @@ func main() {
 	metricsServer := metrics.NewMetricsServer(fmt.Sprintf(":%d", *metricsPort))
 	schedulerMetrics := metrics.NewSchedulerMetrics()
 
-	log.Printf("Starting metrics server on port %d", *metricsPort)
-	go func() {
-		if err := metricsServer.Start(); err != nil {
-			log.Printf("Failed to start metrics server: %v", err)
-		}
-	}()
-
 	schedulerService := scheduler.NewScheduler(policy)
 	schedulerService.SetMetrics(schedulerMetrics)
 
 	pb.RegisterTrainingSchedulerServer(grpcServer, schedulerService)
 
-	log.Printf("Starting scheduler server on port %d", *port)
+	// Initialize logger
+	loggerConfig := logging.Config{
+		Level:     logging.LogLevel(*logLevel),
+		Component: "scheduler",
+		LogDir:    *logDir,
+		LogFile:   "scheduler.log",
+	}
+
+	logger, err := logging.NewLogger(loggerConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	logger.Info("Starting scheduler server", map[string]interface{}{
+		"port":         *port,
+		"metrics_port": *metricsPort,
+		"policy":       *policyType,
+	})
+
+	logger.Info("Starting metrics server", map[string]interface{}{"port": *metricsPort})
+	go func() {
+		if err := metricsServer.Start(); err != nil {
+			logger.Error("Failed to start metrics server", map[string]interface{}{"error": err.Error()})
+		}
+	}()
+
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			logger.Fatal("Failed to serve", map[string]interface{}{"error": err.Error()})
 		}
 	}()
 
@@ -70,7 +89,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("Shutting down server...")
+	logger.Info("Shutting down server", nil)
 	grpcServer.GracefulStop()
-	log.Println("Server stopped")
+	logger.Info("Server stopped", nil)
 }

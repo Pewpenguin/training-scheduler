@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
 	"github.com/training-scheduler/pkg/worker"
 	pb "github.com/training-scheduler/proto"
@@ -23,29 +24,44 @@ func main() {
 	gpuMemories := flag.String("memories", "", "Comma-separated list of GPU memory sizes in MB")
 	workerAddr := flag.String("addr", "localhost:0", "Address of this worker")
 	metricsPort := flag.Int("metrics-port", 9092, "The metrics server port")
+	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logDir := flag.String("log-dir", "/var/log/worker", "Directory for log files")
 	flag.Parse()
+
+	// Initialize logger
+	loggerConfig := logging.Config{
+		Level:     logging.LogLevel(*logLevel),
+		Component: "worker",
+		LogDir:    *logDir,
+		LogFile:   "worker.log",
+	}
+
+	logger, err := logging.NewLogger(loggerConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
 
 	ids := strings.Split(*gpuIDs, ",")
 	models := strings.Split(*gpuModels, ",")
 	memories := strings.Split(*gpuMemories, ",")
 
 	if len(ids) == 0 || ids[0] == "" {
-		log.Fatal("At least one GPU ID must be specified")
+		logger.Fatal("At least one GPU ID must be specified", nil)
 	}
 
 	if len(models) != len(ids) {
-		log.Fatal("Number of GPU models must match number of GPU IDs")
+		logger.Fatal("Number of GPU models must match number of GPU IDs", nil)
 	}
 
 	if len(memories) != len(ids) {
-		log.Fatal("Number of GPU memory sizes must match number of GPU IDs")
+		logger.Fatal("Number of GPU memory sizes must match number of GPU IDs", nil)
 	}
 
 	gpus := make([]*pb.GPU, 0, len(ids))
 	for i, id := range ids {
-		memory, err := strconv.ParseUint(memories[i], 10, 64)
-		if err != nil {
-			log.Fatalf("Invalid GPU memory size: %s", memories[i])
+		memory, parseErr := strconv.ParseUint(memories[i], 10, 64)
+		if parseErr != nil {
+			logger.Fatal("Invalid GPU memory size", map[string]interface{}{"memory": memories[i], "error": parseErr.Error()})
 		}
 
 		gpus = append(gpus, &pb.GPU{
@@ -58,16 +74,16 @@ func main() {
 
 	metricsServer := metrics.NewMetricsServer(fmt.Sprintf(":%d", *metricsPort))
 
-	log.Printf("Starting metrics server on port %d", *metricsPort)
+	logger.Info("Starting metrics server", map[string]interface{}{"port": *metricsPort})
 	go func() {
-		if err := metricsServer.Start(); err != nil {
-			log.Printf("Failed to start metrics server: %v", err)
+		if startErr := metricsServer.Start(); startErr != nil {
+			logger.Error("Failed to start metrics server", map[string]interface{}{"error": startErr.Error()})
 		}
 	}()
 
-	worker, err := worker.NewWorker(*schedulerAddr, gpus)
-	if err != nil {
-		log.Fatalf("Failed to create worker: %v", err)
+	worker, initErr := worker.NewWorker(*schedulerAddr, gpus)
+	if initErr != nil {
+		logger.Fatal("Failed to create worker", map[string]interface{}{"error": initErr.Error()})
 	}
 
 	workerMetrics := metrics.NewWorkerMetrics(worker.ID)
@@ -79,17 +95,20 @@ func main() {
 	defer cancel()
 
 	if err := worker.Start(ctx); err != nil {
-		log.Fatalf("Failed to start worker: %v", err)
+		logger.Fatal("Failed to start worker", map[string]interface{}{"error": err.Error()})
 	}
 
-	log.Printf("Worker started with %d GPUs, connected to scheduler at %s", len(gpus), *schedulerAddr)
+	logger.Info("Worker started", map[string]interface{}{
+		"gpu_count":      len(gpus),
+		"scheduler_addr": *schedulerAddr,
+	})
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("Shutting down worker...")
+	logger.Info("Shutting down worker", nil)
 	cancel()
 	worker.Stop()
-	log.Println("Worker stopped")
+	logger.Info("Worker stopped", nil)
 }

@@ -3,13 +3,13 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc"
@@ -31,6 +31,7 @@ type Worker struct {
 	TaskPriority    map[string]int
 	GPUAllocation   string
 	metrics         *metrics.WorkerMetrics
+	logger          *logging.Logger
 }
 
 type Task struct {
@@ -52,6 +53,16 @@ func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
 
 	client := pb.NewTrainingSchedulerClient(conn)
 
+	// Create default logger
+	loggerConfig := logging.Config{
+		Level:     logging.InfoLevel,
+		Component: "worker",
+	}
+	logger, err := logging.NewLogger(loggerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %v", err)
+	}
+
 	return &Worker{
 		Address:         schedulerAddr,
 		GPUs:            gpus,
@@ -62,6 +73,7 @@ func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
 		MetricFrequency: 2 * time.Second,
 		TaskPriority:    make(map[string]int),
 		GPUAllocation:   "packed",
+		logger:          logger,
 	}, nil
 }
 
@@ -82,7 +94,7 @@ func (w *Worker) Register(ctx context.Context) error {
 	}
 
 	w.ID = resp.AssignedId
-	log.Printf("Worker registered with ID: %s", w.ID)
+	w.logger.Info("Worker registered", map[string]interface{}{"worker_id": w.ID})
 	return nil
 }
 
@@ -107,7 +119,7 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 			w.mu.RLock()
 			if w.Paused {
 				w.mu.RUnlock()
-				log.Printf("Worker is paused, not requesting new tasks")
+				w.logger.Info("Worker is paused, not requesting new tasks", nil)
 				time.Sleep(5 * time.Second)
 				continue
 			}
@@ -148,7 +160,10 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 			}
 
 			if priority, exists := taskPriorities[task.Name]; exists {
-				log.Printf("Task %s has priority %d", task.Name, priority)
+				w.logger.Info("Task priority identified", map[string]interface{}{
+					"task_name": task.Name,
+					"priority":  priority,
+				})
 			}
 
 			w.executeTask(ctx, task)
@@ -157,7 +172,7 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 }
 
 func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
-	log.Printf("Executing task: %s", pbTask.Id)
+	w.logger.Info("Executing task", map[string]interface{}{"task_id": pbTask.Id})
 
 	w.mu.Lock()
 	assignedGPUIDs := w.allocateGPUs(pbTask)
@@ -197,7 +212,10 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 				w.mu.RUnlock()
 
 				if paused {
-					log.Printf("Task %s paused at %.1f%%", task.ID, float32(progress)*100)
+					w.logger.Info("Task paused", map[string]interface{}{
+						"task_id":  task.ID,
+						"progress": float32(progress) * 100,
+					})
 					time.Sleep(5 * time.Second)
 					continue
 				}
@@ -264,7 +282,10 @@ func (w *Worker) reportTaskStatus(ctx context.Context, task *Task) {
 
 	_, err := w.Client.ReportTaskStatus(ctx, update)
 	if err != nil {
-		log.Printf("Failed to report task status: %v", err)
+		w.logger.Error("Failed to report task status", map[string]interface{}{
+			"task_id": task.ID,
+			"error":   err.Error(),
+		})
 	}
 }
 
@@ -292,11 +313,13 @@ func (w *Worker) reportStatus(ctx context.Context) {
 
 		stream, err := w.Client.MonitorWorker(streamCtx, req)
 		if err != nil {
-			log.Printf("Failed to establish worker status monitoring: %v", err)
+			w.logger.Error("Failed to establish worker status monitoring", map[string]interface{}{
+				"error": err.Error(),
+			})
 			return
 		}
 
-		log.Printf("Worker %s status monitoring established", w.ID)
+		w.logger.Info("Worker status monitoring established", map[string]interface{}{"worker_id": w.ID})
 
 		go func() {
 			defer streamCancel()
@@ -304,11 +327,11 @@ func (w *Worker) reportStatus(ctx context.Context) {
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
-					log.Printf("Error receiving from status stream: %v", err)
+					w.logger.Error("Error receiving from status stream", map[string]interface{}{"error": err.Error()})
 					return
 				}
 
-				log.Printf("Received status update from scheduler for worker %s", resp.WorkerId)
+				w.logger.Info("Received status update from scheduler", map[string]interface{}{"worker_id": resp.WorkerId})
 
 				w.processStatusUpdate(streamCtx, resp)
 
@@ -362,29 +385,36 @@ func (w *Worker) sendStatusUpdate() {
 		}
 	}
 
-	log.Printf("Worker status: ID=%s, Status=%v, GPUs=%d/%d available",
-		w.ID, w.Status, availableGPUs, totalGPUs)
+	w.logger.Info("Worker status", map[string]interface{}{
+		"worker_id":      w.ID,
+		"status":         w.Status.String(),
+		"available_gpus": availableGPUs,
+		"total_gpus":     totalGPUs,
+	})
 
 	if len(activeTasks) > 0 {
-		log.Printf("Worker %s active tasks: %v", w.ID, activeTasks)
+		w.logger.Info("Worker active tasks", map[string]interface{}{
+			"worker_id":    w.ID,
+			"active_tasks": activeTasks,
+		})
 	}
 }
 
 func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
-	log.Printf("Received command: %s", command.Type)
+	w.logger.Info("Received command", map[string]interface{}{"command_type": command.Type})
 
 	switch command.Type {
 	case "PAUSE":
 		w.mu.Lock()
 		w.Paused = true
-		log.Printf("Worker paused: %s", w.ID)
+		w.logger.Info("Worker paused", map[string]interface{}{"worker_id": w.ID})
 		w.mu.Unlock()
 		w.recordStatusChange()
 
 	case "RESUME":
 		w.mu.Lock()
 		w.Paused = false
-		log.Printf("Worker resumed: %s", w.ID)
+		w.logger.Info("Worker resumed", map[string]interface{}{"worker_id": w.ID})
 		w.mu.Unlock()
 		w.recordStatusChange()
 
@@ -397,30 +427,30 @@ func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
 	case "UPDATE_CONFIG":
 		config := command.Params["config"]
 		if config != "" {
-			log.Printf("Updating worker configuration: %s", config)
+			w.logger.Info("Updating worker configuration", map[string]interface{}{"config": config})
 
 			if metricFreq, exists := command.Params["metric_frequency"]; exists {
-				log.Printf("Updating metric collection frequency: %s", metricFreq)
+				w.logger.Info("Updating metric collection frequency", map[string]interface{}{"frequency": metricFreq})
 				w.updateMetricFrequency(metricFreq)
 			}
 
 			if taskPriority, exists := command.Params["task_priority"]; exists {
-				log.Printf("Updating task priority settings: %s", taskPriority)
+				w.logger.Info("Updating task priority settings", map[string]interface{}{"priority_settings": taskPriority})
 				w.updateTaskPrioritySettings(taskPriority)
 			}
 
 			if gpuAllocation, exists := command.Params["gpu_allocation"]; exists {
-				log.Printf("Updating GPU allocation strategy: %s", gpuAllocation)
+				w.logger.Info("Updating GPU allocation strategy", map[string]interface{}{"strategy": gpuAllocation})
 				w.updateGPUAllocationStrategy(gpuAllocation)
 			}
 		}
 
 	case "SYNC_STATE":
-		log.Printf("Synchronizing worker state with scheduler")
+		w.logger.Info("Synchronizing worker state with scheduler", nil)
 		go w.reportStatus(ctx)
 
 	default:
-		log.Printf("Unknown command type: %s", command.Type)
+		w.logger.Warn("Unknown command type received", map[string]interface{}{"command_type": command.Type})
 	}
 }
 
@@ -429,7 +459,7 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 	defer w.mu.Unlock()
 
 	if len(resp.Gpus) > 0 {
-		log.Printf("Synchronizing GPU status with scheduler's view")
+		w.logger.Info("Synchronizing GPU status with scheduler's view", nil)
 		schedulerGPUs := make(map[string]*pb.GPU)
 		for _, gpu := range resp.Gpus {
 			schedulerGPUs[gpu.Id] = gpu
@@ -454,8 +484,11 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 					oldAvailable := w.GPUs[i].Available
 					w.GPUs[i].Available = schedulerGPU.Available
 					if oldAvailable != w.GPUs[i].Available {
-						log.Printf("GPU %s availability changed: %v -> %v",
-							gpu.Id, oldAvailable, w.GPUs[i].Available)
+						w.logger.Info("GPU availability changed", map[string]interface{}{
+							"gpu_id":        gpu.Id,
+							"old_available": oldAvailable,
+							"new_available": w.GPUs[i].Available,
+						})
 					}
 				}
 			}
@@ -463,7 +496,10 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 	}
 
 	if resp.Status != w.Status {
-		log.Printf("Worker status updated: %v -> %v", w.Status, resp.Status)
+		w.logger.Info("Worker status updated", map[string]interface{}{
+			"old_status": w.Status.String(),
+			"new_status": resp.Status.String(),
+		})
 		w.Status = resp.Status
 		w.recordStatusChange()
 	}
@@ -476,7 +512,7 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 
 		for taskID, taskSummary := range schedulerTasks {
 			if _, exists := w.ActiveTasks[taskID]; !exists {
-				log.Printf("Task %s exists in scheduler but not in worker, will request it", taskID)
+				w.logger.Info("Task exists in scheduler but not in worker", map[string]interface{}{"task_id": taskID})
 			} else {
 				w.updateTaskPriority(taskID, taskSummary)
 			}
@@ -484,7 +520,10 @@ func (w *Worker) processStatusUpdate(ctx context.Context, resp *pb.WorkerStatusR
 
 		for taskID, task := range w.ActiveTasks {
 			if _, exists := schedulerTasks[taskID]; !exists {
-				log.Printf("Task %s exists in worker but not in scheduler, marking as canceled", taskID)
+				w.logger.Info("Task exists in worker but not in scheduler", map[string]interface{}{
+					"task_id": taskID,
+					"action":  "marking as canceled",
+				})
 				task.Status = pb.TaskStatus_CANCELED
 				go func(taskID string, task *Task) {
 					w.mu.Lock()
@@ -512,8 +551,11 @@ func (w *Worker) updateTaskPriority(taskID string, schedulerTask *pb.TaskSummary
 	}
 
 	if task.Status != schedulerTask.Status {
-		log.Printf("Task %s status updated from scheduler: %v -> %v",
-			taskID, task.Status, schedulerTask.Status)
+		w.logger.Info("Task status updated from scheduler", map[string]interface{}{
+			"task_id":    taskID,
+			"old_status": task.Status.String(),
+			"new_status": schedulerTask.Status.String(),
+		})
 		task.Status = schedulerTask.Status
 
 		if schedulerTask.Status == pb.TaskStatus_COMPLETED ||
@@ -535,8 +577,11 @@ func (w *Worker) updateTaskPriority(taskID string, schedulerTask *pb.TaskSummary
 	}
 
 	if abs(float64(task.Progress-schedulerTask.Progress)) > 0.05 {
-		log.Printf("Task %s progress synced with scheduler: %.2f -> %.2f",
-			taskID, task.Progress, schedulerTask.Progress)
+		w.logger.Info("Task progress synced with scheduler", map[string]interface{}{
+			"task_id":      taskID,
+			"old_progress": task.Progress,
+			"new_progress": schedulerTask.Progress,
+		})
 		task.Progress = schedulerTask.Progress
 	}
 }
@@ -553,7 +598,7 @@ func (w *Worker) stopTask(ctx context.Context, taskID string) {
 	task, exists := w.ActiveTasks[taskID]
 	if exists {
 		task.Status = pb.TaskStatus_CANCELED
-		log.Printf("Task stopped: %s", taskID)
+		w.logger.Info("Task stopped", map[string]interface{}{"task_id": taskID})
 	}
 	w.mu.Unlock()
 
@@ -573,7 +618,7 @@ func (w *Worker) Stop() {
 	}
 	w.mu.RUnlock()
 
-	log.Println("Worker stopped")
+	w.logger.Info("Worker stopped", nil)
 }
 
 func (w *Worker) updateMetricFrequency(freqStr string) {
@@ -582,20 +627,24 @@ func (w *Worker) updateMetricFrequency(freqStr string) {
 
 	freq, err := time.ParseDuration(freqStr)
 	if err != nil {
-		log.Printf("Invalid metric frequency format: %v", err)
+		w.logger.Error("Invalid metric frequency format", map[string]interface{}{"error": err.Error()})
 		return
 	}
 
 	if freq < 100*time.Millisecond || freq > time.Minute {
-		log.Printf("Metric frequency out of range (100ms-1m): %s", freqStr)
+		w.logger.Warn("Metric frequency out of range", map[string]interface{}{
+			"frequency": freqStr,
+			"min":       "100ms",
+			"max":       "1m",
+		})
 		return
 	}
 
-	log.Printf("Setting metric frequency to %v", freq)
+	w.logger.Info("Setting metric frequency", map[string]interface{}{"frequency": freq.String()})
 	w.MetricFrequency = freq
 
 	for _, task := range w.ActiveTasks {
-		log.Printf("Applied new metric frequency to task %s", task.ID)
+		w.logger.Info("Applied new metric frequency to task", map[string]interface{}{"task_id": task.ID})
 	}
 }
 
@@ -613,7 +662,10 @@ func (w *Worker) updateTaskPrioritySettings(priorityStr string) {
 		taskType := strings.TrimSpace(parts[0])
 		priority, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 		if err != nil {
-			log.Printf("Invalid priority value for %s: %v", taskType, err)
+			w.logger.Error("Invalid priority value", map[string]interface{}{
+				"task_type": taskType,
+				"error":     err.Error(),
+			})
 			continue
 		}
 
@@ -621,7 +673,7 @@ func (w *Worker) updateTaskPrioritySettings(priorityStr string) {
 	}
 
 	if len(priorities) > 0 {
-		log.Printf("Setting task priorities: %v", priorities)
+		w.logger.Info("Setting task priorities", map[string]interface{}{"priorities": priorities})
 		w.TaskPriority = priorities
 	}
 }
@@ -639,11 +691,11 @@ func (w *Worker) updateGPUAllocationStrategy(strategy string) {
 
 	strategy = strings.ToLower(strings.TrimSpace(strategy))
 	if !validStrategies[strategy] {
-		log.Printf("Invalid GPU allocation strategy: %s", strategy)
+		w.logger.Warn("Invalid GPU allocation strategy", map[string]interface{}{"strategy": strategy})
 		return
 	}
 
-	log.Printf("Setting GPU allocation strategy to %s", strategy)
+	w.logger.Info("Setting GPU allocation strategy", map[string]interface{}{"strategy": strategy})
 	w.GPUAllocation = strategy
 }
 
@@ -658,7 +710,11 @@ func (w *Worker) allocateGPUs(task *pb.Task) []string {
 	}
 
 	if uint32(len(availableGPUs)) < task.RequiredGpus {
-		log.Printf("Not enough available GPUs for task %s", task.Id)
+		w.logger.Warn("Not enough available GPUs for task", map[string]interface{}{
+			"task_id":        task.Id,
+			"required_gpus":  task.RequiredGpus,
+			"available_gpus": len(availableGPUs),
+		})
 		return assignedGPUIDs
 	}
 
@@ -712,6 +768,11 @@ func (w *Worker) allocateGPUs(task *pb.Task) []string {
 		}
 	}
 
-	log.Printf("Allocated %d GPUs to task %s using '%s' strategy", len(assignedGPUIDs), task.Id, w.GPUAllocation)
+	w.logger.Info("Allocated GPUs to task", map[string]interface{}{
+		"task_id":       task.Id,
+		"gpu_count":     len(assignedGPUIDs),
+		"strategy":      w.GPUAllocation,
+		"allocated_ids": assignedGPUIDs,
+	})
 	return assignedGPUIDs
 }

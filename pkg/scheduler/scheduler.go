@@ -3,10 +3,10 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc/codes"
@@ -22,6 +22,7 @@ type Scheduler struct {
 	pendingTasks   []*Task
 	workloadPolicy WorkloadPolicy
 	metrics        *metrics.SchedulerMetrics
+	logger         *logging.Logger
 }
 
 type Worker struct {
@@ -58,11 +59,23 @@ type WorkloadPolicy interface {
 }
 
 func NewScheduler(policy WorkloadPolicy) *Scheduler {
+	// Create default logger
+	loggerConfig := logging.Config{
+		Level:     logging.InfoLevel,
+		Component: "scheduler",
+	}
+	logger, err := logging.NewLogger(loggerConfig)
+	if err != nil {
+		// Fallback to default logger if creation fails
+		logger, _ = logging.NewLogger(logging.Config{Level: logging.InfoLevel})
+	}
+
 	return &Scheduler{
 		workers:        make(map[string]*Worker),
 		tasks:          make(map[string]*Task),
 		pendingTasks:   make([]*Task, 0),
 		workloadPolicy: policy,
+		logger:         logger,
 	}
 }
 
@@ -103,7 +116,10 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 
 	s.workers[workerID] = worker
 
-	log.Printf("Worker registered: %s with %d GPUs", workerID, len(gpus))
+	s.logger.Info("Worker registered", map[string]interface{}{
+		"worker_id": workerID,
+		"gpu_count": len(gpus),
+	})
 
 	s.recordWorkerRegistration()
 	s.assignPendingTasks()
@@ -163,7 +179,10 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 			Status:        task.Status,
 		}
 
-		log.Printf("Task %s assigned to worker %s", task.ID, workerID)
+		s.logger.Info("Task assigned to worker", map[string]interface{}{
+			"task_id":   task.ID,
+			"worker_id": workerID,
+		})
 
 		return pbTask, nil
 	}
@@ -212,7 +231,11 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		s.assignPendingTasks()
 	}
 
-	log.Printf("Task %s status updated: %s, progress: %.2f%%", taskID, update.Status, update.Progress*100)
+	s.logger.Info("Task status updated", map[string]interface{}{
+		"task_id":  taskID,
+		"status":   update.Status.String(),
+		"progress": update.Progress * 100,
+	})
 
 	return &pb.TaskStatusResponse{
 		Acknowledged: true,
@@ -283,7 +306,10 @@ func (s *Scheduler) AddTask(task *Task) {
 	s.tasks[task.ID] = task
 	s.pendingTasks = append(s.pendingTasks, task)
 
-	log.Printf("New task added: %s, required GPUs: %d", task.ID, task.RequiredGPUs)
+	s.logger.Info("New task added", map[string]interface{}{
+		"task_id":       task.ID,
+		"required_gpus": task.RequiredGPUs,
+	})
 	s.recordTaskSubmission()
 
 	s.assignPendingTasks()
@@ -317,7 +343,10 @@ func (s *Scheduler) assignPendingTasks() {
 		s.pendingTasks = append(s.pendingTasks[:i], s.pendingTasks[i+1:]...)
 		i--
 
-		log.Printf("Task %s assigned to worker %s", task.ID, workerID)
+		s.logger.Info("Task assigned to worker", map[string]interface{}{
+			"task_id":   task.ID,
+			"worker_id": workerID,
+		})
 	}
 }
 
