@@ -1,0 +1,56 @@
+apiVersion: 1
+
+contactPoints:
+  - name: email-notifications
+    receivers:
+      - uid: email-notification-uid
+        type: email
+        settings:
+          addresses: admin@example.com
+          singleEmail: false
+
+  - name: slack-critical
+    receivers:
+      - uid: slack-critical-uid
+        type: slack
+        settings:
+          url: https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_URL
+          title: "{{ .GroupLabels.alertname }}"
+          text: >-
+            {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Severity:* {{ .Labels.severity }}
+              *Time:* {{ .StartsAt }}
+            {{ end }}
+          mentionChannel: here
+          mentionUsers: ""
+          mentionGroups: ""
+          token: ""
+          username: "Grafana Alerting"
+          icon_emoji: ""
+          icon_url: ""
+          recipient: "#alerts-critical"
+
+  - name: slack-warnings
+    receivers:
+      - uid: slack-warnings-uid
+        type: slack
+        settings:
+          url: https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_URL
+          title: "{{ .GroupLabels.alertname }}"
+          text: >-
+            {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Severity:* {{ .Labels.severity }}
+              *Time:* {{ .StartsAt }}
+            {{ end }}
+          mentionChannel: ""
+          mentionUsers: ""
+          mentionGroups: ""
+          token: ""
+          username: "Grafana Alerting"
+          icon_emoji: ""
+          icon_url: ""
+          recipient: "#alerts-warnings"

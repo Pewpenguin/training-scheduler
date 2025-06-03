@@ -1,0 +1,56 @@
+groups:
+  - name: training_scheduler_alerts
+    rules:
+      - alert: WorkerDisconnected
+        expr: worker_status{} == 2 
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker disconnected"
+          description: "Worker {{ $labels.worker_id }} has been disconnected for more than 5 minutes."
+
+      - alert: HighTaskFailureRate
+        expr: rate(scheduler_tasks_failed[15m]) / (rate(scheduler_tasks_completed[15m]) + rate(scheduler_tasks_failed[15m]) + 1) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High task failure rate"
+          description: "Task failure rate is above 30% in the last 15 minutes."
+
+      - alert: GPUMemorySaturation
+        expr: worker_gpu_memory_usage_mb / on(worker_id, gpu_id) group_left() (max by(worker_id, gpu_id) (worker_gpu_memory_usage_mb)) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory near capacity"
+          description: "GPU {{ $labels.gpu_id }} on worker {{ $labels.worker_id }} is using more than 90% of its memory."
+
+      - alert: TaskStuck
+        expr: (time() - task_start_time_seconds) > 3600 and worker_task_progress < 95
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Task potentially stuck"
+          description: "Task {{ $labels.task_id }} on worker {{ $labels.worker_id }} has been running for over 1 hour with progress less than 95%."
+
+      - alert: WorkerError
+        expr: worker_status{} == 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker in error state"
+          description: "Worker {{ $labels.worker_id }} is in ERROR state for more than 2 minutes."
+
+      - alert: NoActiveWorkers
+        expr: sum(worker_status{} == 1) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active workers"
+          description: "There are no active workers in the system for more than 5 minutes."

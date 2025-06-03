@@ -1,8 +1,22 @@
 package worker
 
 import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/training-scheduler/pkg/metrics"
 	pb "github.com/training-scheduler/proto"
+)
+
+var (
+	taskStartTime = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "task_start_time_seconds",
+			Help: "The start time of tasks in unix seconds",
+		},
+		[]string{"worker_id", "task_id", "task_name"},
+	)
 )
 
 func (w *Worker) SetMetrics(metrics *metrics.WorkerMetrics) {
@@ -58,6 +72,8 @@ func (w *Worker) recordTaskStart(task *Task) {
 		return
 	}
 
+	taskStartTime.WithLabelValues(w.ID, task.ID, task.Name).Set(float64(time.Now().Unix()))
+
 	w.metrics.SetTaskProgress(task.ID, task.Name, 0.0)
 	w.updateMetrics()
 }
@@ -87,6 +103,8 @@ func (w *Worker) recordTaskCompletion(task *Task) {
 	if w.metrics == nil {
 		return
 	}
+
+	taskStartTime.DeleteLabelValues(w.ID, task.ID, task.Name)
 
 	w.metrics.SetTaskProgress(task.ID, task.Name, float64(task.Progress))
 	w.updateMetrics()
