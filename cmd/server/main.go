@@ -11,6 +11,7 @@ import (
 
 	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
+	"github.com/training-scheduler/pkg/persistence"
 	"github.com/training-scheduler/pkg/scheduler"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc"
@@ -22,6 +23,13 @@ func main() {
 	policyType := flag.String("policy", "balanced", "Workload distribution policy (simple or balanced)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	logDir := flag.String("log-dir", "/var/log/scheduler", "Directory for log files")
+
+	enablePersistence := flag.Bool("persistence", true, "Enable state persistence")
+	persistenceType := flag.String("persistence-type", "database", "Persistence type (database or file)")
+	databaseType := flag.String("db-type", "sqlite", "Database type (sqlite or postgres)")
+	databaseConnection := flag.String("db-connection", "scheduler.db", "Database connection string")
+	autoSave := flag.Bool("auto-save", true, "Enable automatic state saving")
+	saveInterval := flag.Int("save-interval", 60, "Interval between automatic state saves (seconds)")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
@@ -85,11 +93,48 @@ func main() {
 	schedulerMetrics.SetPendingTasks(0)
 	schedulerMetrics.SetActiveWorkers(0)
 
+	if *enablePersistence {
+		var persistenceConfig persistence.Config
+		if *persistenceType == "database" {
+			dbConfig := persistence.DatabaseConfig{
+				Type:             persistence.DatabaseType(*databaseType),
+				ConnectionString: *databaseConnection,
+				AutoMigrate:      true,
+				LogMode:          *logLevel == "debug",
+			}
+			persistenceConfig = persistence.Config{
+				Type:         persistence.DatabasePersistence,
+				Database:     dbConfig,
+				SaveInterval: *saveInterval,
+				AutoSave:     *autoSave,
+			}
+		} else {
+			logger.Warn("File persistence is not implemented, using default database persistence", nil)
+			persistenceConfig = persistence.DefaultConfig()
+		}
+
+		logger.Info("Enabling state persistence", map[string]interface{}{
+			"type":          persistenceConfig.Type,
+			"auto_save":     persistenceConfig.AutoSave,
+			"save_interval": persistenceConfig.SaveInterval,
+		})
+
+		err = schedulerService.EnablePersistence(persistenceConfig)
+		if err != nil {
+			logger.Error("Failed to enable persistence", map[string]interface{}{"error": err.Error()})
+		}
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
 	logger.Info("Shutting down server", nil)
+
+	if *enablePersistence {
+		schedulerService.DisablePersistence()
+	}
+
 	grpcServer.GracefulStop()
 	logger.Info("Server stopped", nil)
 }

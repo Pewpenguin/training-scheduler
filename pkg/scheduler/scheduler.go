@@ -8,6 +8,7 @@ import (
 
 	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
+	"github.com/training-scheduler/pkg/persistence"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,13 +17,14 @@ import (
 type Scheduler struct {
 	pb.UnimplementedTrainingSchedulerServer
 
-	mu             sync.RWMutex
-	workers        map[string]*Worker
-	tasks          map[string]*Task
-	pendingTasks   []*Task
-	workloadPolicy WorkloadPolicy
-	metrics        *metrics.SchedulerMetrics
-	logger         *logging.Logger
+	mu                 sync.RWMutex
+	workers            map[string]*Worker
+	tasks              map[string]*Task
+	pendingTasks       []*Task
+	workloadPolicy     WorkloadPolicy
+	metrics            *metrics.SchedulerMetrics
+	logger             *logging.Logger
+	persistenceManager *persistence.Manager
 }
 
 type Worker struct {
@@ -66,7 +68,6 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 	}
 	logger, err := logging.NewLogger(loggerConfig)
 	if err != nil {
-		// Fallback to default logger if creation fails
 		logger, _ = logging.NewLogger(logging.Config{Level: logging.InfoLevel})
 	}
 
@@ -122,6 +123,7 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	})
 
 	s.recordWorkerRegistration()
+	s.UpdatePersistentState()
 	s.assignPendingTasks()
 
 	return &pb.RegisterWorkerResponse{
@@ -184,6 +186,8 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 			"worker_id": workerID,
 		})
 
+		s.UpdatePersistentState()
+
 		return pbTask, nil
 	}
 
@@ -236,6 +240,8 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		"status":   update.Status.String(),
 		"progress": update.Progress * 100,
 	})
+
+	s.UpdatePersistentState()
 
 	return &pb.TaskStatusResponse{
 		Acknowledged: true,
@@ -312,10 +318,14 @@ func (s *Scheduler) AddTask(task *Task) {
 	})
 	s.recordTaskSubmission()
 
+	s.UpdatePersistentState()
+
 	s.assignPendingTasks()
 }
 
 func (s *Scheduler) assignPendingTasks() {
+	tasksAssigned := false
+
 	for i := 0; i < len(s.pendingTasks); i++ {
 		task := s.pendingTasks[i]
 		workerID, gpuIDs, err := s.workloadPolicy.AssignTask(s.workers, task)
@@ -347,6 +357,12 @@ func (s *Scheduler) assignPendingTasks() {
 			"task_id":   task.ID,
 			"worker_id": workerID,
 		})
+
+		tasksAssigned = true
+	}
+
+	if tasksAssigned {
+		s.UpdatePersistentState()
 	}
 }
 
@@ -368,4 +384,13 @@ func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest)
 	}
 
 	return response, nil
+}
+
+func (s *Scheduler) UpdatePersistentState() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.persistenceManager != nil {
+		s.persistenceManager.TriggerSave()
+	}
 }

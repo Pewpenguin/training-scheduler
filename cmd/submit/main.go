@@ -53,7 +53,7 @@ func main() {
 		}
 	}
 
-	conn, err := grpc.Dial(*schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(*schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to scheduler: %v", err)
 	}
